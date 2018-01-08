@@ -7,12 +7,16 @@ import os
 from tqdm import trange, tqdm
 from skimage import io, transform
 
+SQ_IMG_SIZE = 32
+GEN_LAYERS = 2
+DISC_LAYERS = 3
+
 def loadCelebAData(size=5):
 	files_in = os.listdir('img_align_celeba')
 	files = np.random.choice(files_in, size=size)
 	images = []
 	for f in tqdm(files):
-			images.append(transform.resize(io.imread('img_align_celeba/' + f), (64,64,3), mode='constant'))#(178,218,3)
+			images.append(transform.resize(io.imread('img_align_celeba/' + f), (SQ_IMG_SIZE,SQ_IMG_SIZE,3), mode='constant'))#(178,218,3)
 	result = np.asarray(images)
 	return result
 
@@ -21,44 +25,43 @@ def lrelu(x, alpha=0.2):
 
 def dcgan_generator(z, name = "g_generator"):
 	with tf.variable_scope(name) as scope:
-		# if reuse==True:
 		if scope.trainable_variables():
 			scope.reuse_variables()
 		z = tf.reshape(z, [1, 100], name="g_reshape0")
-		reshape1 = tf.contrib.layers.fully_connected(z, 16384, activation_fn=None, biases_initializer=tf.contrib.layers.variance_scaling_initializer(), weights_initializer=tf.contrib.layers.variance_scaling_initializer())
-		reshape2 = tf.reshape(reshape1, [1, 4, 4, 1024], name="g_reshape2")
-		g0 = tf.layers.conv2d_transpose(reshape2, 512, 3, strides = [2,2], padding = "SAME", use_bias=True, name = "g_conv0", kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=tf.nn.relu)
-		print("g0: {}".format(g0.shape))
-		g1 = tf.layers.conv2d_transpose(g0, 256, 3, strides = [2,2], padding = "SAME", use_bias=True, name = "g_conv1", kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=tf.nn.relu)
-		print("g1: {}".format(g1.shape))
-		g2 = tf.layers.conv2d_transpose(g1, 128, 3, strides = [2,2], padding = "SAME", use_bias=True, name = "g_conv2", kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=tf.nn.relu)
-		print("g2: {}".format(g2.shape))
-		g3 = tf.layers.conv2d_transpose(g2, 3, 3, strides = [2,2], padding = "SAME", use_bias=True, name = "g_conv3", kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=tf.nn.sigmoid)
-		print("g3: {}".format(g3.shape))
-		return g3
+		reshape1 = tf.contrib.layers.fully_connected(z, SQ_IMG_SIZE*SQ_IMG_SIZE*4, activation_fn=None, biases_initializer=tf.contrib.layers.variance_scaling_initializer(), weights_initializer=tf.contrib.layers.variance_scaling_initializer())
+		reshape2 = tf.reshape(reshape1, [1, 4, 4, SQ_IMG_SIZE*SQ_IMG_SIZE/4], name="g_reshape2")
+		g_mid = generator_mid_layers(reshape2, GEN_LAYERS)
+		g_final = tf.layers.conv2d_transpose(g_mid, 3, 3, strides = [2,2], padding = "SAME", use_bias=True, name = "g_conv_final", kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=tf.nn.sigmoid)
+		print("g_final: {}".format(g_final.shape))
+		return g_final
+
+def generator_mid_layers(previous, LAYERS):
+	for x in range(LAYERS):
+		g = tf.layers.conv2d_transpose(previous, SQ_IMG_SIZE/(2**x), 3, strides = [2,2], padding = "SAME", use_bias=True, name = "g_conv{}".format(x), kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=tf.nn.relu)
+		previous = g
+		print("g{}: {}".format(x, g.shape))
+	return g
 
 def dcgan_discriminator(input_image, reuse=False, name = "d_discriminator"):
 	with tf.variable_scope(name) as scope:
-		# if reuse==True:
 		if scope.trainable_variables():
 			scope.reuse_variables()
 		print("input_image: {}".format(input_image.shape))
-		h0 = tf.layers.conv2d(input_image, 64, 3, name="d_conv0", reuse=reuse, kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=None, padding="SAME")
-		print("h0: {}".format(h0.shape))
-		dr0 = lrelu(h0)
-		print("dr0: {}".format(dr0.shape))
-		h1 = tf.layers.conv2d(dr0, 32, 3, name="d_conv1", reuse=reuse, kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=None, padding="SAME")
-		dr1 = lrelu(h1)
-		print("h1: {}".format(dr1.shape))
-		h2 = tf.layers.conv2d(dr1, 8, 3, name="d_conv2", reuse=reuse, kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=None, padding="SAME")
-		dr2 = lrelu(h2)
-		print("h2: {}".format(dr2.shape))
-		h3 = tf.layers.conv2d(dr2, 2, 3, name="d_conv3", reuse=reuse, kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=None, padding="SAME")
-		dr3 = lrelu(h3)
-		print("h3: {}".format(dr3.shape))
-		dr3 = tf.reshape(dr3,[1,64*64*2])
-		scalar = tf.contrib.layers.fully_connected(dr3, 1, reuse=reuse, activation_fn=None, biases_initializer=tf.contrib.layers.variance_scaling_initializer(), weights_initializer=tf.contrib.layers.variance_scaling_initializer(), scope=scope)
+		d_mid = discriminator_mid_layers(input_image, DISC_LAYERS, reuse)
+		d_final = tf.layers.conv2d(d_mid, 2, 3, name="d_conv3", reuse=reuse, kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=None, padding="SAME")
+		dr_final = lrelu(d_final)
+		print("d_final: {}".format(dr_final.shape))
+		dr_final = tf.reshape(dr_final,[1,SQ_IMG_SIZE*SQ_IMG_SIZE*2])
+		scalar = tf.contrib.layers.fully_connected(dr_final, 1, reuse=reuse, activation_fn=None, biases_initializer=tf.contrib.layers.variance_scaling_initializer(), weights_initializer=tf.contrib.layers.variance_scaling_initializer(), scope=scope)
 		return scalar
+
+def discriminator_mid_layers(previous, LAYERS, reuse):
+	for x in range(LAYERS):
+		d = tf.layers.conv2d(previous, SQ_IMG_SIZE/(2**x), 3, name="d_conv{}".format(x), reuse=reuse, kernel_initializer = tf.contrib.layers.variance_scaling_initializer(), activation=None, padding="SAME")
+		dr = lrelu(d)
+		previous = dr
+		print("d{}: {}".format(x, dr.shape))
+	return dr
 
 def get_z():
 	return np.random.uniform(-1, 1, 100)
@@ -67,15 +70,15 @@ EPOCHS = 1000
 C = 0.0001
 BETA_1 = 0
 BETA_2 = 0.9
-CELEBA_IMAGE_DIMS = [1,64,64,3]
+CELEBA_IMAGE_DIMS = [1,SQ_IMG_SIZE,SQ_IMG_SIZE,3]
 N_CRITIC = 5
 LAMBDA = 10
-DATA_SIZE = 20
+DATA_SIZE = 100
+N_SAMPLES = 10.0
 true_images = loadCelebAData(DATA_SIZE)
 print("Loaded {} true images!".format(len(true_images)))
 
 true_img = tf.placeholder(tf.float32, CELEBA_IMAGE_DIMS)
-tf_label = tf.placeholder(tf.int64)
 z_node = tf.placeholder(tf.float32, [100])
 epsilon = tf.placeholder(tf.float32, shape = [])
 
@@ -121,22 +124,30 @@ with tf.Session() as sess:
 				theta, g_loss = sess.run([gen_train, gen_loss], feed_dict = {z_node: z_gen}) #find gen loss, then update gen
 				# print("Gen loss: {}".format(g_loss))
 			i += 1
-		if epoch % 1 == 0:
+		if epoch % 1 == 0:#progessing samples
 			z_test = get_z()
 			out_image = sess.run(img_attempt, feed_dict = {z_node: z_test})
-			out_image = np.reshape(out_image, [64, 64, 3])
-			plt.imsave("final{}.png".format(epoch), out_image)
+			out_image = np.reshape(out_image, [SQ_IMG_SIZE, SQ_IMG_SIZE, 3])
+			plt.imsave("epoch{}_sample.png".format(epoch), out_image)
 
+	#interpolation
 	z1 = get_z()
 	z2 = get_z()
-	eps = np.arange(11)/10.0
+	eps = np.arange(N_SAMPLES+1)/N_SAMPLES
 	print(eps)
 	i = 0
 	for a in eps:
 		tmp = a * z1 + (1 - a) * z2
 		interp_image = sess.run(img_attempt, feed_dict={z_node: tmp})
-		interp_image = np.reshape(interp_image, [64, 64, 3])
-		plt.imsave("interp{}.png".format(i), interp_image)
+		interp_image = np.reshape(interp_image, [SQ_IMG_SIZE, SQ_IMG_SIZE, 3])
+		plt.imsave("final_interp{}.png".format(i), interp_image)
 		i += 1
+
+	#samples
+	for s in range(N_SAMPLES):
+		z_temp = get_z()
+		out_image = sess.run(img_attempt, feed_dict = {z_node: z_temp})
+		out_image = np.reshape(out_image, [SQ_IMG_SIZE, SQ_IMG_SIZE, 3])
+		plt.imsave("final_sample{}.png".format(s), out_image)
 
 	writer.close
