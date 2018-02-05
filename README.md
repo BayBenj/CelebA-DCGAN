@@ -6,5 +6,5 @@
 
 • The output of a similar deep learning algorithm (has more layers in its generator and discriminator networks) trained on landscape paintings can be found [here](https://twitter.com/deep_landscapes).
 
-![alt text](https://github.com/BayBenj/CelebA-DCGAN/data.jpg "Data sample")
-![alt text](https://github.com/BayBenj/CelebA-DCGAN/output.png "Output sample")
+![Data sample](https://github.com/BayBenj/CelebA-DCGAN/blob/master/data.jpg "Data sample")
+![Output sample](https://github.com/BayBenj/CelebA-DCGAN/blob/master/output.png "Output sample")
