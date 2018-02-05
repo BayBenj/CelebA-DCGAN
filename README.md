@@ -5,3 +5,6 @@
 • I used the [CelebA dataset](http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html). 
 
 • The output of a similar deep learning algorithm (has more layers in its generator and discriminator networks) trained on landscape paintings can be found [here](https://twitter.com/deep_landscapes).
+
+![Data sample][data.jpg]
+![Output sample][output.png]
