@@ -1,4 +1,4 @@
-# CelebA-GAN
+# DCGAN
 
 • I roughly followed the deep convolutional GAN framework in [this paper](https://arxiv.org/pdf/1511.06434.pdf).
 
