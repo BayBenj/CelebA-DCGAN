@@ -1,33 +1,76 @@
 
 import numpy as np
 import tensorflow as tf
-import matplotlib.pyplot as plt
-from matplotlib.font_manager import FontProperties
 import os
 from tqdm import trange, tqdm
 from skimage import io, transform
+import argparse
+import math
+from scipy.stats import truncnorm
+import matplotlib.pyplot as plt
 
-SQ_IMG_SIZE = 32
-GEN_LAYERS = 2
 DISC_LAYERS = 3
+GEN_LAYERS = 2
+SQ_IMG_SIZE = 32
+BASE_PATH = os.path.dirname(os.path.realpath(__file__))
 
-def loadCelebAData(size=5):
-	files_in = os.listdir('img_align_celeba')
+#arguments
+def parse_arguments():
+	parser = argparse.ArgumentParser(description='Description of your program')
+	parser.add_argument('-d','--discriminator', help='Number of convolutional discriminator layers', required=False, default = '3')
+	parser.add_argument('-g','--generator', help='Number of convolutional generator layers', required=False, default = '2')
+	parser.add_argument('-s','--size', help='Size of square images in pixels, use 2^n', required=False, default = '32')
+	parser.add_argument('-p','--path', help='Base path', required=False, default = os.path.realpath(__file__))
+	args = vars(parser.parse_args())
+	if int(args['size']) > 0:
+		SQ_IMG_SIZE = int(args['size'])
+	if int(args['discriminator']) > 0 and int(args['discriminator']) < math.log(SQ_IMG_SIZE,2):
+		DISC_LAYERS = int(args['discriminator'])
+	if 'generator' in args and int(args['generator']) > 0 and int(args['generator']):
+		GEN_LAYERS = int(args['generator'])
+	BASE_PATH = args['path']
+
+parse_arguments()
+
+Z_SIZE = 1000
+BASE_GEN_SIZE = 8
+
+def ensureDirectory(path):
+	if not os.path.exists("{}/".format(path)):
+		os.makedirs("{}/".format(path))
+
+WRITER_PATH = BASE_PATH + "/writer"
+ensureDirectory(WRITER_PATH)
+
+MODEL_PATH = BASE_PATH + "/model"
+ensureDirectory(MODEL_PATH)
+
+OUTPUT_PATH = BASE_PATH + "/output"
+ensureDirectory(OUTPUT_PATH)
+
+DATA_PATH = BASE_PATH + "/training_data"
+ensureDirectory(DATA_PATH)
+
+def loadData(size):
+	files_in = os.listdir('training_data')
+	if size > len(files_in):
+		size = len(files_in)
 	files = np.random.choice(files_in, size=size)
 	images = []
 	for f in tqdm(files):
-			images.append(transform.resize(io.imread('img_align_celeba/' + f), (SQ_IMG_SIZE,SQ_IMG_SIZE,3), mode='constant'))#(178,218,3)
+		images.append(transform.resize(io.imread('training_data/' + f), (SQ_IMG_SIZE,SQ_IMG_SIZE,3), mode='constant'))
 	result = np.asarray(images)
 	return result
 
-def lrelu(x, alpha=0.2):
+
+def lrelu(x, alpha=0.1):
 	return tf.nn.relu(x) - alpha * tf.nn.relu(-x)
 
 def dcgan_generator(z, name = "g_generator"):
 	with tf.variable_scope(name) as scope:
 		if scope.trainable_variables():
 			scope.reuse_variables()
-		z = tf.reshape(z, [1, 100], name="g_reshape0")
+		z = tf.reshape(z, [1, Z_SIZE], name="g_reshape0")
 		reshape1 = tf.contrib.layers.fully_connected(z, SQ_IMG_SIZE*SQ_IMG_SIZE*4, activation_fn=None, biases_initializer=tf.contrib.layers.variance_scaling_initializer(), weights_initializer=tf.contrib.layers.variance_scaling_initializer())
 		reshape2 = tf.reshape(reshape1, [1, 4, 4, SQ_IMG_SIZE*SQ_IMG_SIZE/4], name="g_reshape2")
 		g_mid = generator_mid_layers(reshape2, GEN_LAYERS)
@@ -64,22 +107,22 @@ def discriminator_mid_layers(previous, LAYERS, reuse):
 	return dr
 
 def get_z():
-	return np.random.uniform(-1, 1, 100)
+	return truncnorm(a=-1.0, b=1.0, scale=1.0).rvs(size=Z_SIZE)
 
 EPOCHS = 1000
 C = 0.0001
-BETA_1 = 0
-BETA_2 = 0.9
-CELEBA_IMAGE_DIMS = [1,SQ_IMG_SIZE,SQ_IMG_SIZE,3]
+BETA_1 = 0.5
+BETA_2 = 0.999
+IMAGE_DIMS = [1,SQ_IMG_SIZE,SQ_IMG_SIZE,3]
 N_CRITIC = 5
 LAMBDA = 10
-DATA_SIZE = 100
-N_SAMPLES = 10.0
-true_images = loadCelebAData(DATA_SIZE)
-print("Loaded {} true images!".format(len(true_images)))
+DATA_SIZE = 10
+N_SAMPLES = 10
+training_images = loadData(DATA_SIZE)
+print("Loaded {} training images!".format(len(training_images)))
 
-true_img = tf.placeholder(tf.float32, CELEBA_IMAGE_DIMS)
-z_node = tf.placeholder(tf.float32, [100])
+true_img = tf.placeholder(tf.float32, IMAGE_DIMS)
+z_node = tf.placeholder(tf.float32, [Z_SIZE])
 epsilon = tf.placeholder(tf.float32, shape = [])
 
 with tf.name_scope("d_discriminator_loss") as scope:
@@ -108,16 +151,17 @@ with tf.name_scope("g_generator_train") as scope:
 init = tf.global_variables_initializer()
 
 with tf.Session() as sess:
-	writer = tf.summary.FileWriter("/Users/Benjamin/Desktop/byu/Semester 8/CS501R/lab7", sess.graph)
+	print("Training...")
+	writer = tf.summary.FileWriter(WRITER_PATH, sess.graph)
 	sess.run(init)
 
 	for epoch in range(EPOCHS):
 		i = 0
-		for true_image in true_images:
-			true_image = np.reshape(true_image, CELEBA_IMAGE_DIMS)
+		for training_image in training_images:
+			training_image = np.reshape(training_image, IMAGE_DIMS)
 			z_disc = get_z()
 			eps = np.random.rand()
-			w, d_loss = sess.run([disc_train, disc_loss], feed_dict = {z_node: z_disc, true_img: true_image, epsilon: eps}) #find disc loss, then update disc
+			w, d_loss = sess.run([disc_train, disc_loss], feed_dict = {z_node: z_disc, true_img: training_image, epsilon: eps}) #find disc loss, then update disc
 			# print("Disc loss: {}".format(d_loss))
 			if i % N_CRITIC == 0:
 				z_gen = get_z()
@@ -128,7 +172,8 @@ with tf.Session() as sess:
 			z_test = get_z()
 			out_image = sess.run(img_attempt, feed_dict = {z_node: z_test})
 			out_image = np.reshape(out_image, [SQ_IMG_SIZE, SQ_IMG_SIZE, 3])
-			plt.imsave("epoch{}_sample.png".format(epoch), out_image)
+			plt.imsave("{}/epoch{}_sample.png".format(OUTPUT_PATH, epoch), out_image)
+	print("Finished training!")
 
 	#interpolation
 	z1 = get_z()
@@ -140,7 +185,7 @@ with tf.Session() as sess:
 		tmp = a * z1 + (1 - a) * z2
 		interp_image = sess.run(img_attempt, feed_dict={z_node: tmp})
 		interp_image = np.reshape(interp_image, [SQ_IMG_SIZE, SQ_IMG_SIZE, 3])
-		plt.imsave("final_interp{}.png".format(i), interp_image)
+		plt.imsave("{}/final_interp{}.png".format(OUTPUT_PATH, i), interp_image)
 		i += 1
 
 	#samples
@@ -148,6 +193,6 @@ with tf.Session() as sess:
 		z_temp = get_z()
 		out_image = sess.run(img_attempt, feed_dict = {z_node: z_temp})
 		out_image = np.reshape(out_image, [SQ_IMG_SIZE, SQ_IMG_SIZE, 3])
-		plt.imsave("final_sample{}.png".format(s), out_image)
+		plt.imsave("{}/final_sample{}.png".format(OUTPUT_PATH, s), out_image)
 
 	writer.close
